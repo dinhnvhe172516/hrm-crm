@@ -1,0 +1,45 @@
+{
+  "name": "hrm-crm-frontend",
+  "version": "1.0.0",
+  "description": "HRM + CRM Frontend - React.js + Vite + Tailwind CSS",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext js,jsx"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.1",
+    "axios": "^1.6.2",
+    "zustand": "^4.4.7",
+    "@tanstack/react-query": "^5.14.2",
+    "react-hook-form": "^7.49.2",
+    "zod": "^3.22.4",
+    "@hookform/resolvers": "^3.3.2",
+    "socket.io-client": "^4.6.1",
+    "antd": "^5.12.5",
+    "@ant-design/icons": "^5.2.6",
+    "recharts": "^2.10.3",
+    "@fullcalendar/react": "^6.1.10",
+    "@fullcalendar/daygrid": "^6.1.10",
+    "@fullcalendar/timegrid": "^6.1.10",
+    "@fullcalendar/interaction": "^6.1.10",
+    "dayjs": "^1.11.10",
+    "react-hot-toast": "^2.4.1",
+    "lucide-react": "^0.303.0",
+    "clsx": "^2.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.0.8",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.32",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0"
+  }
+}

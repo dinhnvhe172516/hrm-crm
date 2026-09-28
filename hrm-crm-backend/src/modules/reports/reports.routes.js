@@ -1,0 +1,10 @@
+﻿const express = require('express');
+const router = express.Router();
+const { authenticate } = require('../../middlewares/auth.middleware');
+router.use(authenticate);
+router.get('/hrm/overview',    (req, res) => res.json({ success: true, data: {} }));
+router.get('/hrm/attendance',  (req, res) => res.json({ success: true, data: {} }));
+router.get('/hrm/payroll',     (req, res) => res.json({ success: true, data: {} }));
+router.get('/crm/overview',    (req, res) => res.json({ success: true, data: {} }));
+router.get('/crm/sales',       (req, res) => res.json({ success: true, data: {} }));
+module.exports = router;
