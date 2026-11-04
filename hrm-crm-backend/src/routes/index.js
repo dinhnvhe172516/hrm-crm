@@ -1,7 +1,8 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 
 router.use('/auth',               require('../modules/hrm/auth/auth.routes'));
+router.use('/roles',              require('../modules/hrm/roles/roles.routes'));
 router.use('/users',              require('../modules/hrm/users/users.routes'));
 router.use('/departments',        require('../modules/hrm/departments/departments.routes'));
 router.use('/groups',             require('../modules/hrm/groups/groups.routes'));

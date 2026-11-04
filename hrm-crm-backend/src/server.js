@@ -11,7 +11,7 @@ const startServer = async () => {
   try {
     // Connect databases
     await connectDB();
-    // await connectRedis(); // Temporarily disabled
+    await connectRedis();
 
     // Start HTTP server
     const server = app.listen(PORT, () => {
@@ -22,10 +22,17 @@ const startServer = async () => {
     initSocket(server);
 
     // Graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('SIGTERM received. Shutting down gracefully...');
-      server.close(() => process.exit(0));
-    });
+    const handleShutdown = async (signal) => {
+      logger.info(`${signal} received. Shutting down gracefully...`);
+      server.close(async () => {
+        const { disconnectRedis } = require('./config/redis');
+        await disconnectRedis();
+        process.exit(0);
+      });
+    };
+
+    process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+    process.on('SIGINT', () => handleShutdown('SIGINT'));
 
   } catch (error) {
     logger.error('❌ Failed to start server:', error);

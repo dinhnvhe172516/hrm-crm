@@ -14,12 +14,21 @@ const authenticate = async (req, res, next) => {
     // Check blacklist (if Redis is enabled)
     const redis = getRedis();
     if (redis) {
-      const isBlacklisted = await redis.get(`blacklist:token:${token}`);
-      if (isBlacklisted) throw new AppError('Token has been revoked', 401);
+      try {
+        const isBlacklisted = await redis.get(`blacklist:token:${token}`);
+        if (isBlacklisted) throw new AppError('Token has been revoked', 401);
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+        // Don't block requests if Redis fails
+      }
     }
 
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-    req.user = decoded;
+    req.user = {
+      ...decoded,
+      role: decoded.role || decoded.roleCode || null,
+      roleCode: decoded.roleCode || decoded.role || null,
+    };
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {
