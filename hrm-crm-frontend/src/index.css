@@ -2,13 +2,267 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
+/* ═══════════════════════════════════════════════
+   DESIGN TOKENS & BASE
+   ═══════════════════════════════════════════════ */
+:root {
+  /* Surfaces */
+  --bg:          #09090B;
+  --bg-1:        #0D0D10;
+  --bg-2:        #111115;
+  --bg-3:        #17171C;
+
+  /* Borders — hairline only */
+  --b0:          #1A1A1F;
+  --b1:          #242429;
+  --b2:          #2E2E35;
+  --b3:          #3A3A43;
+
+  /* Text tokens */
+  --t-muted:     #3F3F46;
+  --t-dim:       #52525B;
+  --t-soft:      #71717A;
+  --t-sec:       #A1A1AA;
+  --t-base:      #D4D4D8;
+  --t-high:      #F4F4F5;
+
+  /* Accent — single locked color */
+  --a:           #6366F1;
+  --a-hover:     #4F46E5;
+  --a-dim:       rgba(99,102,241,.1);
+  --a-ring:      rgba(99,102,241,.25);
+  --a-glow:      rgba(99,102,241,.06);
+
+  /* Semantic */
+  --green:       #22C55E;
+  --green-dim:   rgba(34,197,94,.1);
+  --amber:       #F59E0B;
+  --red:         #EF4444;
+  --red-dim:     rgba(239,68,68,.12);
+
+  /* Radius scale — hairline geometry */
+  --r-xs:  4px;
+  --r-sm:  7px;
+  --r-md:  10px;
+  --r-lg:  14px;
+  --r-xl:  20px;
+  --r-pill:999px;
+
+  /* Motion */
+  --ease-out:    cubic-bezier(.4, 0, .2, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: #f5f5f5;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #F8FAFC;
+  color: #1E293B;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Micro scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--b2);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--b3);
+}
+
+/* ═══════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════ */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes notifIn {
+  from { opacity: 0; transform: translateY(-10px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.04); }
+}
+
+.anim-slide-down { animation: slideDown 220ms var(--ease-spring) both; }
+.anim-page-in    { animation: pageIn 240ms var(--ease-out) both; }
+.anim-fade-in    { animation: fadeIn 200ms var(--ease-out) both; }
+.anim-shake      { animation: shake 300ms var(--ease-out) both; }
+.anim-spin       { animation: spin 0.7s linear infinite; }
+.anim-notif-in   { animation: notifIn 360ms var(--ease-spring) both; }
+.anim-pulse-glow { animation: pulseGlow 3s ease-in-out infinite; }
+
+/* ── Fluid Wave Animations ───────────────────────────────── */
+@keyframes waveFlowL2R_slow {
+  0%   { transform: translate3d(-50%, 0, 0); }
+  100% { transform: translate3d(0%, 0, 0); }
+}
+@keyframes waveFlowL2R_mid {
+  0%   { transform: translate3d(-50%, 0, 0); }
+  100% { transform: translate3d(0%, 0, 0); }
+}
+@keyframes waveFlowL2R_fast {
+  0%   { transform: translate3d(-50%, 0, 0); }
+  100% { transform: translate3d(0%, 0, 0); }
+}
+@keyframes waveFlowL2R_top {
+  0%   { transform: translate3d(-50%, 0, 0); }
+  100% { transform: translate3d(0%, 0, 0); }
+}
+@keyframes waveBreatheSlow {
+  0%, 100% { transform: translateY(0px) scaleY(1); }
+  50%      { transform: translateY(-8px) scaleY(1.02); }
+}
+@keyframes waveBreatheMid {
+  0%, 100% { transform: translateY(0px) scaleY(1); }
+  50%      { transform: translateY(7px) scaleY(0.98); }
+}
+
+.anim-wave-slow { animation: waveFlowL2R_slow 42s linear infinite; will-change: transform; }
+.anim-wave-mid  { animation: waveFlowL2R_mid 30s linear infinite; will-change: transform; }
+.anim-wave-fast { animation: waveFlowL2R_fast 22s linear infinite; will-change: transform; }
+.anim-wave-top  { animation: waveFlowL2R_top 48s linear infinite; will-change: transform; }
+.anim-wave-breathe-1 { animation: waveBreatheSlow 14s ease-in-out infinite; }
+.anim-wave-breathe-2 { animation: waveBreatheMid 10s ease-in-out infinite; }
+
+/* ── 3D Glassmorphism Card Float ─────────────────────────── */
+@keyframes glassCardFloat {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-7px); }
+}
+
+.anim-card-float {
+  animation: glassCardFloat 8s ease-in-out infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-wave-slow,
+  .anim-wave-mid,
+  .anim-wave-fast,
+  .anim-wave-top,
+  .anim-wave-breathe-1,
+  .anim-wave-breathe-2,
+  .anim-card-float {
+    animation: none !important;
+  }
+}
+
+/* Focus ring helper */
+.focus-ring {
+  outline: none;
+  transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+}
+.focus-ring:focus-visible {
+  border-color: var(--a) !important;
+  box-shadow: 0 0 0 3px var(--a-ring) !important;
+}
+
+/* ═══════════════════════════════════════════════
+   ANT DESIGN GLOBAL TWEAKS
+   ═══════════════════════════════════════════════ */
+.ant-input-affix-wrapper-focused,
+.ant-input-affix-wrapper:focus {
+  border-color: var(--a) !important;
+  box-shadow: 0 0 0 3px var(--a-ring) !important;
+}
+
+.ant-checkbox-checked .ant-checkbox-inner {
+  background-color: #c17c54 !important;
+  border-color: #c17c54 !important;
+}
+.ant-checkbox-wrapper:hover .ant-checkbox-inner {
+  border-color: #c17c54 !important;
+}
+
+.ant-input-password-icon.anticon { color: #a1a1aa !important; }
+.ant-input-password-icon.anticon:hover { color: #52525b !important; }
+
+/* Tabs ink bar & active color */
+.ant-tabs-ink-bar { background: #c17c54 !important; }
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: #c17c54 !important; }
+.ant-tabs-tab:hover { color: #c17c54 !important; }
+
+/* ── OTP Input custom style ─────────────────────────────── */
+.auth-otp-input {
+  width: 48px !important;
+  height: 56px !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  text-align: center !important;
+  border-radius: 10px !important;
+  border: 1.5px solid #e4e4e7 !important;
+  color: #18181b !important;
+  background: #fff !important;
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+  caret-color: #c17c54;
+}
+.auth-otp-input:focus {
+  border-color: #c17c54 !important;
+  box-shadow: 0 0 0 3px rgba(193, 124, 84, 0.14) !important;
+  outline: none !important;
+}
+.auth-otp-input.error {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1) !important;
+}
+
+/* ── Google button ──────────────────────────────────────── */
+.auth-google-btn.ant-btn {
+  height: 46px !important;
+  border: 1.5px solid #e4e4e7 !important;
+  background: #fff !important;
+  color: #3f3f46 !important;
+  font-weight: 500 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  border-radius: 10px !important;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s !important;
+}
+.auth-google-btn.ant-btn:hover {
+  border-color: #c17c54 !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+  background: #fffdf9 !important;
+  color: #18181b !important;
 }

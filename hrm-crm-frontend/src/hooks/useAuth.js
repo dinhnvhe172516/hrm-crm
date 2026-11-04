@@ -4,14 +4,24 @@ import { authService } from '@/services/hrm/auth.service'
 import toast from 'react-hot-toast'
 import { useNavigate } from 'react-router-dom'
 
-export const useLogin = () => {
+/**
+ * useLogin — hỗ trợ 2FA flow:
+ *   - Nếu server trả về requiresTwoFactor: true → gọi onRequires2FA(tempToken)
+ *   - Nếu login thành công → setAuth + navigate dashboard
+ */
+export const useLogin = (onRequires2FA) => {
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
 
   return useMutation({
     mutationFn: authService.login,
     onSuccess: (res) => {
-      setAuth(res.data.user, res.data.accessToken, res.data.refreshToken)
+      const { requiresTwoFactor, tempToken, user, accessToken, refreshToken } = res.data
+      if (requiresTwoFactor && onRequires2FA) {
+        onRequires2FA({ tempToken })
+        return
+      }
+      setAuth(user, accessToken, refreshToken)
       toast.success('Đăng nhập thành công!')
       navigate('/dashboard')
     },
