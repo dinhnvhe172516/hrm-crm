@@ -11,7 +11,23 @@ const startServer = async () => {
   try {
     // Connect databases
     await connectDB();
+    require('./shared/models');
     await connectRedis();
+
+    // Tự động kiểm tra và seed dữ liệu mẫu ban đầu nếu chưa có
+    try {
+      const User = require('./shared/models/User.model');
+      const sampleCount = await User.countDocuments({
+        email: { $in: ['admin@nexus-corp.com', 'linh.nguyen@nexus-corp.com', 'minh.tran@nexus-corp.com', 'hoa.pham@nexus-corp.com'] },
+      });
+      if (sampleCount < 4) {
+        logger.info(`📦 Cơ sở dữ liệu chưa đủ 4 tài khoản nhân sự mẫu (hiện có: ${sampleCount}/4). Đang tự động seed...`);
+        const { seedRbac } = require('./scripts/seedRbac');
+        await seedRbac(false);
+      }
+    } catch (seedErr) {
+      logger.warn(`⚠️ Auto-seed check: ${seedErr.message}`);
+    }
 
     // Start HTTP server
     const server = app.listen(PORT, () => {

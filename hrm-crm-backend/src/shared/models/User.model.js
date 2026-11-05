@@ -1,4 +1,4 @@
-﻿const mongoose = require("mongoose");
+const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
 /**
@@ -88,6 +88,5 @@ const userSchema = new Schema({
 userSchema.index({ department: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ status: 1 });
-userSchema.index({ email: 1 });
 
 module.exports = mongoose.model("User", userSchema);

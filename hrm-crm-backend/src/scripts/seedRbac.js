@@ -7,6 +7,8 @@ const { connectDB } = require('../config/database');
 const Permission = require('../shared/models/Permission.model');
 const Role = require('../shared/models/Role.model');
 const User = require('../shared/models/User.model');
+const Department = require('../shared/models/Department.model');
+const Position = require('../shared/models/Position.model');
 const UserCredential = require('../modules/hrm/auth/UserCredential.model');
 const logger = require('../shared/utils/logger');
 
@@ -23,10 +25,12 @@ const ALL_MODULES = [
 
 const ALL_ACTIONS = ['read', 'create', 'update', 'delete', 'approve', 'reject', 'export', 'import'];
 
-const seedRbac = async () => {
+const seedRbac = async (isStandalone = true) => {
   try {
-    logger.info('🚀 Bắt đầu quá trình Seeding RBAC & Permissions...');
-    await connectDB();
+    logger.info('🚀 Bắt đầu quá trình Seeding RBAC & Dữ liệu Nhân sự Mẫu...');
+    if (mongoose.connection.readyState !== 1) {
+      await connectDB();
+    }
 
     // ── 1. Tạo danh sách Permissions ──────────────────────────────────────────
     logger.info('📦 Khởi tạo danh mục Permissions...');
@@ -53,7 +57,7 @@ const seedRbac = async () => {
     }
     logger.info(`✅ Đã khởi tạo/cập nhật ${permissionsMap.size} permissions thành công.`);
 
-    // Helper lọc IDs theo prefix hoặc action
+    // Helper lọc IDs theo predicate
     const getPermIds = (matcher) => {
       const ids = [];
       for (const [code, id] of permissionsMap.entries()) {
@@ -84,7 +88,7 @@ const seedRbac = async () => {
         description: 'Toàn quyền quản trị hệ thống',
         level: 1,
         isSystem: true,
-        permissions: Array.from(permissionsMap.values()), // Tất cả quyền
+        permissions: Array.from(permissionsMap.values()),
       },
       {
         code: 'hr_manager',
@@ -167,51 +171,190 @@ const seedRbac = async () => {
       logger.info(`  - Role [${roleDoc.code}] gán ${roleDoc.permissions.length} quyền.`);
     }
 
-    // ── 3. Khởi tạo tài khoản Super Admin ban đầu ──────────────────────────────
-    const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@hrm-crm.local';
-    const adminPass = process.env.ADMIN_SEED_PASSWORD || 'Admin@123456';
+    // ── 3. Khởi tạo Cơ cấu Phòng ban Mẫu (Departments) ────────────────────────
+    logger.info('🏢 Khởi tạo Phòng ban mẫu...');
+    const departmentsData = [
+      { code: 'BOD',  name: 'Ban Giám Đốc',             description: 'Bộ máy lãnh đạo và điều hành công ty' },
+      { code: 'HR',   name: 'Phòng Nhân Sự',            description: 'Quản lý tuyển dụng, chế độ, tiền lương và đào tạo' },
+      { code: 'SALE', name: 'Phòng Kinh Doanh',         description: 'Phát triển thị trường, tìm kiếm khách hàng và bán hàng' },
+      { code: 'TECH', name: 'Phòng Công Nghệ & Kỹ Thuật', description: 'Phát triển và bảo trì hệ thống phần mềm' },
+    ];
 
-    let adminUser = await User.findOne({ email: adminEmail });
-    if (!adminUser) {
-      logger.info(`👤 Đang tạo tài khoản Super Admin mặc định: ${adminEmail}...`);
-      adminUser = await User.create({
-        fullName: 'Super Administrator',
-        email: adminEmail,
-        employeeCode: 'ADMIN001',
-        role: createdRoles['super_admin']._id,
-        isEmailVerified: true,
-        isActive: true,
-        status: 'official',
-      });
-
-      const saltRounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12;
-      const passwordHash = await bcrypt.hash(adminPass, saltRounds);
-
-      await UserCredential.create({
-        userId: adminUser._id,
-        passwordHash,
-        mustChangePassword: false,
-      });
-
-      logger.info(`✅ Tạo Super Admin thành công!`);
-      logger.info(`   👉 Email: ${adminEmail}`);
-      logger.info(`   👉 Password: ${adminPass}`);
-    } else {
-      // Đảm bảo Super Admin luôn có đúng role super_admin
-      adminUser.role = createdRoles['super_admin']._id;
-      adminUser.isActive = true;
-      await adminUser.save();
-      logger.info(`ℹ️ Tài khoản Super Admin đã tồn tại (${adminEmail}). Đã đồng bộ vai trò.`);
+    const createdDepartments = {};
+    for (const d of departmentsData) {
+      const depDoc = await Department.findOneAndUpdate(
+        { code: d.code },
+        d,
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      createdDepartments[d.code] = depDoc;
     }
 
-    logger.info('🎉 HOÀN TẤT SEEDING RBAC & TÀI KHOẢN ADMIN!');
-    await mongoose.disconnect();
-    process.exit(0);
+    // ── 4. Khởi tạo Chức danh / Vị trí Công việc (Positions) ──────────────────
+    logger.info('💼 Khởi tạo Vị trí / Chức danh công việc mẫu...');
+    const positionsData = [
+      { code: 'CEO',        title: 'Tổng Giám Đốc',            department: createdDepartments['BOD']._id,  level: 1 },
+      { code: 'HR_MGR',     title: 'Trưởng Phòng Nhân Sự',      department: createdDepartments['HR']._id,   level: 4 },
+      { code: 'SALES_LEAD', title: 'Trưởng Phòng Kinh Doanh',   department: createdDepartments['SALE']._id, level: 4 },
+      { code: 'SALES_REP',  title: 'Chuyên Viên Bán Hàng',      department: createdDepartments['SALE']._id, level: 2 },
+      { code: 'TECH_LEAD',  title: 'Trưởng Phòng Công Nghệ',    department: createdDepartments['TECH']._id, level: 4 },
+    ];
+
+    const createdPositions = {};
+    for (const p of positionsData) {
+      const posDoc = await Position.findOneAndUpdate(
+        { code: p.code },
+        p,
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      createdPositions[p.code] = posDoc;
+    }
+
+    // ── 5. Khởi tạo Danh sách Tài khoản Nhân sự Mẫu (Khớp 100% Login Frontend) ─
+    logger.info('👤 Khởi tạo tài khoản nhân sự mẫu (Khớp nút 1-Click trên Login)...');
+
+    const sampleUsers = [
+      {
+        email: 'admin@nexus-corp.com',
+        fullName: 'Quản Trị Viên Hệ Thống',
+        employeeCode: 'ADMIN001',
+        roleCode: 'super_admin',
+        deptCode: 'BOD',
+        posCode: 'CEO',
+        phone: '0909000001',
+        gender: 'male',
+        password: 'Password@123',
+      },
+      {
+        email: 'admin@hrm-crm.local',
+        fullName: 'Super Admin (Local)',
+        employeeCode: 'ADMIN000',
+        roleCode: 'super_admin',
+        deptCode: 'BOD',
+        posCode: 'CEO',
+        phone: '0909000000',
+        gender: 'male',
+        password: 'Password@123',
+      },
+      {
+        email: 'linh.nguyen@nexus-corp.com',
+        fullName: 'Nguyễn Thị Thùy Linh',
+        employeeCode: 'NV001',
+        roleCode: 'hr_manager',
+        deptCode: 'HR',
+        posCode: 'HR_MGR',
+        phone: '0901234567',
+        gender: 'female',
+        password: 'Password@123',
+      },
+      {
+        email: 'minh.tran@nexus-corp.com',
+        fullName: 'Trần Quang Minh',
+        employeeCode: 'NV002',
+        roleCode: 'crm_manager',
+        deptCode: 'SALE',
+        posCode: 'SALES_LEAD',
+        phone: '0912345678',
+        gender: 'male',
+        password: 'Password@123',
+      },
+      {
+        email: 'hoa.pham@nexus-corp.com',
+        fullName: 'Phạm Mai Hoa',
+        employeeCode: 'NV003',
+        roleCode: 'employee',
+        deptCode: 'SALE',
+        posCode: 'SALES_REP',
+        phone: '0987654321',
+        gender: 'female',
+        password: 'Password@123',
+      },
+      {
+        email: 'dung.le@nexus-corp.com',
+        fullName: 'Lê Tuấn Dũng',
+        employeeCode: 'NV004',
+        roleCode: 'department_manager',
+        deptCode: 'TECH',
+        posCode: 'TECH_LEAD',
+        phone: '0934567890',
+        gender: 'male',
+        password: 'Password@123',
+      },
+    ];
+
+    const saltRounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12;
+
+    for (const u of sampleUsers) {
+      const role = createdRoles[u.roleCode];
+      const department = createdDepartments[u.deptCode];
+      const position = createdPositions[u.posCode];
+
+      let user = await User.findOne({ email: u.email });
+      if (!user) {
+        user = await User.findOne({ employeeCode: u.employeeCode });
+      }
+
+      if (!user) {
+        user = await User.create({
+          fullName: u.fullName,
+          email: u.email,
+          employeeCode: u.employeeCode,
+          phone: u.phone,
+          gender: u.gender,
+          department: department?._id,
+          position: position?._id,
+          role: role?._id,
+          isEmailVerified: true,
+          isActive: true,
+          status: 'official',
+        });
+      } else {
+        user.fullName = u.fullName;
+        user.email = u.email;
+        user.employeeCode = u.employeeCode;
+        user.role = role?._id;
+        user.department = department?._id;
+        user.position = position?._id;
+        user.phone = u.phone;
+        user.isActive = true;
+        user.failedLoginAttempts = 0;
+        user.lockUntil = null;
+        await user.save();
+      }
+
+      // Tạo/Cập nhật UserCredential (Mật khẩu: Password@123)
+      const passwordHash = await bcrypt.hash(u.password, saltRounds);
+      await UserCredential.findOneAndUpdate(
+        { userId: user._id },
+        {
+          userId: user._id,
+          passwordHash,
+          mustChangePassword: false,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      logger.info(
+        `  ✅ [${u.employeeCode}] ${u.fullName} (${u.email}) - Vai trò: ${u.roleCode} - Pass: ${u.password}`
+      );
+    }
+
+    logger.info('🎉 HOÀN TẤT SEEDING TOÀN BỘ TÀI KHOẢN NHÂN SỰ & RBAC!');
+    if (isStandalone) {
+      await mongoose.disconnect();
+      process.exit(0);
+    }
   } catch (error) {
-    logger.error('❌ Lỗi Seeding RBAC:', error);
-    process.exit(1);
+    logger.error('❌ Lỗi Seeding RBAC & Nhân sự:', error);
+    if (isStandalone) {
+      process.exit(1);
+    }
+    throw error;
   }
 };
 
-seedRbac();
+if (require.main === module) {
+  seedRbac(true);
+}
 
+module.exports = { seedRbac };

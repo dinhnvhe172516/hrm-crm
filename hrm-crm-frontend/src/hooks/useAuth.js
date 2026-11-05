@@ -43,11 +43,16 @@ export const useLogout = () => {
 }
 
 export const useMe = () => {
-  const { isAuthenticated } = useAuthStore()
+  const { isAuthenticated, updateUser } = useAuthStore()
   return useQuery({
     queryKey: ['me'],
-    queryFn: authService.getMe,
+    queryFn: async () => {
+      const res = await authService.getMe()
+      if (res?.data) {
+        updateUser(res.data)
+      }
+      return res.data
+    },
     enabled: isAuthenticated,
-    select: (res) => res.data,
   })
 }

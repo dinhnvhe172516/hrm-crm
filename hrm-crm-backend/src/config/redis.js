@@ -4,24 +4,24 @@ const logger = require('../shared/utils/logger');
 let redisClient = null;
 
 const connectRedis = async () => {
+  if (process.env.REDIS_ENABLED === 'false') {
+    logger.info('ℹ️ Redis is disabled (REDIS_ENABLED=false). Running in direct MongoDB mode.');
+    return null;
+  }
+
   try {
     redisClient = createClient({
       socket: {
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-        reconnectStrategy: (retries) => {
-          if (retries > 3) {
-            logger.warn('⚠️ Redis connection retry limit reached. Continuing without cache (MongoDB fallback).');
-            return false; // Stop auto-reconnecting to prevent process blockage
-          }
-          return Math.min(retries * 500, 2000);
-        },
+        connectTimeout: 1500,
+        reconnectStrategy: false, // Fail fast in dev if Redis is not running
       },
       password: process.env.REDIS_PASSWORD || undefined,
     });
 
-    redisClient.on('error', (err) => {
-      logger.warn(`Redis connection warning: ${err.message}`);
+    redisClient.on('error', () => {
+      // Silent error handler to avoid spamming console when offline
     });
 
     redisClient.on('connect', () => logger.info('🔄 Redis connecting...'));
@@ -30,7 +30,7 @@ const connectRedis = async () => {
     await redisClient.connect();
     return redisClient;
   } catch (error) {
-    logger.warn(`⚠️ Redis is unavailable: ${error.message}. App will fallback to MongoDB directly.`);
+    logger.warn(`⚠️ Redis is unavailable (${error.message || 'connection refused'}). App will fallback to MongoDB directly.`);
     redisClient = null;
     return null;
   }

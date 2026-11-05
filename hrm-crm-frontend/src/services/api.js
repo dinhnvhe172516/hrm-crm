@@ -28,7 +28,21 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    const isAuthRoute =
+      originalRequest.url?.includes('/auth/login') ||
+      originalRequest.url?.includes('/auth/register') ||
+      originalRequest.url?.includes('/auth/refresh-token') ||
+      originalRequest.url?.includes('/auth/forgot-password') ||
+      originalRequest.url?.includes('/auth/reset-password')
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthRoute) {
+      const { refreshToken, setTokens, logout } = useAuthStore.getState()
+
+      if (!refreshToken) {
+        logout()
+        return Promise.reject(error.response?.data || error)
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject })
@@ -42,7 +56,6 @@ api.interceptors.response.use(
       isRefreshing = true
 
       try {
-        const { refreshToken, setTokens, logout } = useAuthStore.getState()
         const res = await axios.post(`${api.defaults.baseURL}/auth/refresh-token`, { refreshToken })
         const { accessToken, refreshToken: newRefreshToken } = res.data.data
         setTokens(accessToken, newRefreshToken)
@@ -51,7 +64,7 @@ api.interceptors.response.use(
         return api(originalRequest)
       } catch (err) {
         processQueue(err, null)
-        useAuthStore.getState().logout()
+        logout()
         window.location.href = '/login'
         return Promise.reject(err)
       } finally {

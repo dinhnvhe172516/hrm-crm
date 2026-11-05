@@ -8,8 +8,10 @@ import {
   LoginPage, ForgotPasswordPage, DashboardPage,
   // Auth lazy
   VerifyEmailPage, ResetPasswordPage,
+  // Error lazy
+  ForbiddenPage,
   // HRM
-  EmployeesPage, DepartmentsPage, AttendancePage,
+  RolesPage, EmployeesPage, DepartmentsPage, AttendancePage,
   LeavePage, PayrollPage, TasksPage, MeetingsPage,
   // CRM
   CompaniesPage, ContactsPage, LeadsPage, PipelinePage,
@@ -23,6 +25,13 @@ const LazyPage = ({ Page }) => (
   </Suspense>
 )
 
+/** Wrap trang có yêu cầu quyền hạn */
+const GuardedPage = ({ Page, permission, role }) => (
+  <ProtectedRoute requiredPermission={permission} requiredRole={role}>
+    <LazyPage Page={Page} />
+  </ProtectedRoute>
+)
+
 export default function AppRouter() {
   return (
     <Routes>
@@ -33,6 +42,7 @@ export default function AppRouter() {
       <Route path="/forgot-password"  element={<ForgotPasswordPage />} />
       <Route path="/reset-password"   element={<LazyPage Page={ResetPasswordPage} />} />
       <Route path="/verify-email"     element={<LazyPage Page={VerifyEmailPage} />} />
+      <Route path="/403"              element={<LazyPage Page={ForbiddenPage} />} />
 
       {/* ── Protected ─────────────────────────────────────────── */}
       <Route
@@ -48,25 +58,26 @@ export default function AppRouter() {
 
         {/* HRM */}
         <Route path="hrm">
-          <Route path="employees"   element={<LazyPage Page={EmployeesPage} />} />
-          <Route path="departments" element={<LazyPage Page={DepartmentsPage} />} />
-          <Route path="attendance"  element={<LazyPage Page={AttendancePage} />} />
-          <Route path="leave"       element={<LazyPage Page={LeavePage} />} />
-          <Route path="payroll"     element={<LazyPage Page={PayrollPage} />} />
-          <Route path="tasks"       element={<LazyPage Page={TasksPage} />} />
-          <Route path="meetings"    element={<LazyPage Page={MeetingsPage} />} />
+          <Route path="roles"       element={<GuardedPage Page={RolesPage} permission="system:read" />} />
+          <Route path="employees"   element={<GuardedPage Page={EmployeesPage} permission="employee:read" />} />
+          <Route path="departments" element={<GuardedPage Page={DepartmentsPage} permission="department:read" />} />
+          <Route path="attendance"  element={<GuardedPage Page={AttendancePage} permission="attendance:read" />} />
+          <Route path="leave"       element={<GuardedPage Page={LeavePage} permission="leave:read" />} />
+          <Route path="payroll"     element={<GuardedPage Page={PayrollPage} permission="payroll:read" />} />
+          <Route path="tasks"       element={<GuardedPage Page={TasksPage} permission="task:read" />} />
+          <Route path="meetings"    element={<GuardedPage Page={MeetingsPage} permission="meeting:read" />} />
         </Route>
 
         {/* CRM */}
         <Route path="crm">
-          <Route path="companies"  element={<LazyPage Page={CompaniesPage} />} />
-          <Route path="contacts"   element={<LazyPage Page={ContactsPage} />} />
-          <Route path="leads"      element={<LazyPage Page={LeadsPage} />} />
-          <Route path="pipeline"   element={<LazyPage Page={PipelinePage} />} />
-          <Route path="activities" element={<LazyPage Page={ActivitiesPage} />} />
-          <Route path="quotations" element={<LazyPage Page={QuotationsPage} />} />
-          <Route path="invoices"   element={<LazyPage Page={InvoicesPage} />} />
-          <Route path="tickets"    element={<LazyPage Page={TicketsPage} />} />
+          <Route path="companies"  element={<GuardedPage Page={CompaniesPage} permission="crm_company:read" />} />
+          <Route path="contacts"   element={<GuardedPage Page={ContactsPage} permission="crm_contact:read" />} />
+          <Route path="leads"      element={<GuardedPage Page={LeadsPage} permission="crm_lead:read" />} />
+          <Route path="pipeline"   element={<GuardedPage Page={PipelinePage} permission="crm_opportunity:read" />} />
+          <Route path="activities" element={<GuardedPage Page={ActivitiesPage} permission="crm_activity:read" />} />
+          <Route path="quotations" element={<GuardedPage Page={QuotationsPage} permission="crm_quotation:read" />} />
+          <Route path="invoices"   element={<GuardedPage Page={InvoicesPage} permission="crm_invoice:read" />} />
+          <Route path="tickets"    element={<GuardedPage Page={TicketsPage} permission="crm_ticket:read" />} />
         </Route>
       </Route>
 

@@ -26,9 +26,14 @@ export default function Header() {
         <Button type="text" icon={<BellOutlined />} size="large" />
       </Badge>
       <Dropdown menu={{ items: menuItems, onClick: handleMenuClick }} placement="bottomRight">
-        <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Avatar src={user?.avatar} icon={<UserOutlined />} />
-          <span>{user?.fullName || 'User'}</span>
+        <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Avatar src={user?.avatar} icon={<UserOutlined />} style={{ backgroundColor: '#1890ff' }} />
+          <div className="flex flex-col text-left leading-tight">
+            <span className="font-semibold text-slate-800 text-sm">{user?.fullName || 'User'}</span>
+            <span className="text-[11px] text-slate-500 font-medium">
+              {user?.role?.name || 'Nhân viên'} {user?.department?.name ? `• ${user.department.name}` : ''}
+            </span>
+          </div>
         </div>
       </Dropdown>
     </AntHeader>

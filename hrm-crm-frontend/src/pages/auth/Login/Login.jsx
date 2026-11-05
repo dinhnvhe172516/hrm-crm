@@ -24,9 +24,10 @@ import AnimatedWaveBackground from './AnimatedWaveBackground'
 
 // Tài khoản mẫu nội bộ của công ty để test nhanh 1-Click
 const INTERNAL_DEMO_ACCOUNTS = [
-  { label: 'Admin Nhân sự', email: 'linh.nguyen@nexus-corp.com', password: 'Password@123', role: 'HR Lead' },
-  { label: 'Trưởng phòng Kinh doanh', email: 'minh.tran@nexus-corp.com', password: 'Password@123', role: 'Sales Lead' },
-  { label: 'Chuyên viên Bán hàng', email: 'hoa.pham@nexus-corp.com', password: 'Password@123', role: 'Sales Rep' },
+  { label: 'Super Admin', email: 'admin@nexus-corp.com', password: 'Password@123', role: 'Super Admin' },
+  { label: 'Admin Nhân sự', email: 'linh.nguyen@nexus-corp.com', password: 'Password@123', role: 'HR Manager' },
+  { label: 'Trưởng phòng Sales', email: 'minh.tran@nexus-corp.com', password: 'Password@123', role: 'CRM Manager' },
+  { label: 'Chuyên viên Bán hàng', email: 'hoa.pham@nexus-corp.com', password: 'Password@123', role: 'Nhân viên' },
 ]
 
 export default function LoginPage() {

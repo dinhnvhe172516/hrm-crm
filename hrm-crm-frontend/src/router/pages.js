@@ -9,7 +9,11 @@ export { default as DashboardPage }      from '@/pages/dashboard/Dashboard'
 export const VerifyEmailPage   = lazy(() => import('@/pages/auth/VerifyEmail/VerifyEmail'))
 export const ResetPasswordPage = lazy(() => import('@/pages/auth/ResetPassword/ResetPassword'))
 
+// ── Error pages (lazy) ─────────────────────────────────────────
+export const ForbiddenPage      = lazy(() => import('@/pages/error/ForbiddenPage'))
+
 // ── HRM module (lazy) ─────────────────────────────────────────
+export const RolesPage         = lazy(() => import('@/pages/hrm/roles/Roles'))
 export const EmployeesPage   = lazy(() => import('@/pages/hrm/employees/Employees'))
 export const DepartmentsPage = lazy(() => import('@/pages/hrm/departments/Departments'))
 export const AttendancePage  = lazy(() => import('@/pages/hrm/attendance/Attendance'))

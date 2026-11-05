@@ -5,6 +5,9 @@ const jwt            = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 
 const User           = require('../../../shared/models/User.model');
+const Role           = require('../../../shared/models/Role.model');
+const Department     = require('../../../shared/models/Department.model');
+const Position       = require('../../../shared/models/Position.model');
 const UserCredential = require('./UserCredential.model');
 const RefreshToken   = require('./RefreshToken.model');
 const UserSession    = require('./UserSession.model');
@@ -81,12 +84,21 @@ const authService = {
       deviceInfo: device.deviceInfo,
     };
 
-    // ── 1. Tìm user ────────────────────────────────────────────────────────
-    const user = await User.findOne({ email: email.toLowerCase().trim() })
+    // ── 1. Tìm user theo Email hoặc Mã nhân viên (employeeCode) ──────────────
+    const loginIdentifier = email.trim();
+    logger.info(`🔑 Yêu cầu đăng nhập: "${loginIdentifier}"`);
+    const query = loginIdentifier.includes('@')
+      ? { email: loginIdentifier.toLowerCase() }
+      : { $or: [{ email: loginIdentifier.toLowerCase() }, { employeeCode: loginIdentifier.toUpperCase() }] };
+
+    const user = await User.findOne(query)
       .select('+failedLoginAttempts +lockUntil +lastLoginAt +isActive +status +isEmailVerified')
-      .populate('role', 'code name level');
+      .populate('role', 'code name level')
+      .populate('department', 'name code')
+      .populate('position', 'title code level');
 
     if (!user) {
+      logger.warn(`❌ Không tìm thấy tài khoản với email/mã NV: "${loginIdentifier}"`);
       await writeAuditLog(LoginHistory, { ...baseHistory, isSuccess: false, failureReason: FAILURE_REASON.NOT_FOUND });
       throw new AppError('Email hoặc mật khẩu không đúng', 401);
     }
@@ -210,10 +222,13 @@ const authService = {
       mustChangePassword: credential.mustChangePassword || false,
       user: {
         id:              user._id,
+        employeeCode:    user.employeeCode || null,
         email:           user.email,
         fullName:        user.fullName,
         avatar:          user.avatar || null,
         role:            user.role ? { code: user.role.code, name: user.role.name, level: user.role.level } : null,
+        department:      user.department ? { code: user.department.code, name: user.department.name } : null,
+        position:        user.position ? { code: user.position.code, title: user.position.title } : null,
         permissions,
         isEmailVerified: user.isEmailVerified,
         status:          user.status,
@@ -349,7 +364,7 @@ const authService = {
       .select('-__v')
       .populate('role',       'code name level')
       .populate('department', 'name code')
-      .populate('position',   'name');
+      .populate('position',   'title code level');
 
     if (!user) throw new AppError('Người dùng không tồn tại', 404);
 
