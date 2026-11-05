@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const authController = require('./auth.controller');
 const { loginLimiter } = require('../../../middlewares/rateLimiter.middleware');
@@ -8,8 +8,8 @@ const { authenticate } = require('../../../middlewares/auth.middleware');
 router.post('/register',         authController.register);
 router.post('/login',            loginLimiter, authController.login);
 router.post('/refresh-token',    authController.refreshToken);
-router.post('/forgot-password',  authController.forgotPassword);
-router.post('/reset-password',   authController.resetPassword);
+router.post('/forgot-password',  loginLimiter, authController.forgotPassword);
+router.post('/reset-password',   loginLimiter, authController.resetPassword);
 router.post('/verify-email',     authController.verifyEmail);
 router.get('/google',            authController.googleAuth);
 router.get('/google/callback',   authController.googleCallback);

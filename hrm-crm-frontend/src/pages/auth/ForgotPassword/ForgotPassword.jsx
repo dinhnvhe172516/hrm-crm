@@ -115,8 +115,17 @@ export default function ForgotPasswordPage() {
             </div>
             <h2 className="text-[20px] font-bold text-slate-900 tracking-tight">Kiểm tra hộp thư email</h2>
             <p className="text-[13px] text-slate-600 mt-2 leading-relaxed">
-              Chúng tôi đã gửi hướng dẫn khôi phục mật khẩu tới <strong className="text-slate-900 font-mono">{sentEmail}</strong>.
+              Chúng tôi đã gửi mã xác thực OTP (6 chữ số) và liên kết khôi phục tới <strong className="text-slate-900 font-mono">{sentEmail}</strong>.
             </p>
+            <div className="mt-5">
+              <Link
+                to={`/reset-password?email=${encodeURIComponent(sentEmail)}`}
+                className="w-full inline-flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[13.5px] font-semibold transition-all shadow-md shadow-blue-500/20"
+              >
+                <span>Nhập mã OTP & Đổi mật khẩu ngay</span>
+                <ArrowRight size={16} />
+              </Link>
+            </div>
           </div>
         )}
 

@@ -1,4 +1,4 @@
-﻿const authService = require('./auth.service');
+const authService = require('./auth.service');
 const { successResponse } = require('../../../shared/utils/response');
 const { AppError } = require('../../../middlewares/error.middleware');
 
@@ -76,8 +76,8 @@ const revokeSession = async (req, res, next) => {
 
 const forgotPassword = async (req, res, next) => {
     try {
-        await authService.forgotPassword(req.body.email);
-        successResponse(res, null, 'Reset email sent');
+        const data = await authService.forgotPassword(req.body.email, req);
+        successResponse(res, data, data?.message || 'Email khôi phục đã được gửi');
     } catch (e) {
         next(e);
     }
@@ -85,8 +85,8 @@ const forgotPassword = async (req, res, next) => {
 
 const resetPassword = async (req, res, next) => {
     try {
-        await authService.resetPassword(req.body);
-        successResponse(res, null, 'Password reset successful');
+        const data = await authService.resetPassword(req.body);
+        successResponse(res, data, data?.message || 'Đặt lại mật khẩu thành công');
     } catch (e) {
         next(e);
     }

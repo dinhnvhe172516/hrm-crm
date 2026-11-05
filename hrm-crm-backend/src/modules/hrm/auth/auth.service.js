@@ -1,6 +1,7 @@
 'use strict';
 
 const bcrypt         = require('bcryptjs');
+const crypto         = require('crypto');
 const jwt            = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 
@@ -12,6 +13,8 @@ const UserCredential = require('./UserCredential.model');
 const RefreshToken   = require('./RefreshToken.model');
 const UserSession    = require('./UserSession.model');
 const LoginHistory   = require('./LoginHistory.model');
+const PasswordResetToken = require('./PasswordResetToken.model');
+const emailService   = require('../../../shared/services/email.service');
 const { AppError }   = require('../../../middlewares/error.middleware');
 const { getRedis }   = require('../../../config/redis');
 const { getRolePermissions } = require('../../../middlewares/rbac.middleware');
@@ -400,24 +403,178 @@ const authService = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // FORGOT PASSWORD
+  // FORGOT PASSWORD (Generate 6-digit OTP & 1-Click Link, Send Email)
   // ═══════════════════════════════════════════════════════════════════════════
-  forgotPassword: async (email) => {
+  forgotPassword: async (email, req) => {
     if (!email) throw new AppError('Email là bắt buộc', 400);
-    // TODO: Tạo PasswordResetToken, gửi email qua nodemailer
-    logger.info(`Password reset requested for: ${email}`);
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail, isActive: true });
+
+    // Bảo vệ an toàn: Không tiết lộ email có tồn tại hay không cho kẻ tấn công (anti-enumeration)
+    if (!user) {
+      logger.warn(`Password reset requested for unregistered/inactive email: ${normalizedEmail}`);
+      return {
+        message: 'Nếu email tồn tại trong hệ thống, hướng dẫn và mã OTP khôi phục mật khẩu đã được gửi.',
+      };
+    }
+
+    // 1. Sinh mã OTP ngẫu nhiên 6 chữ số
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // 2. Sinh secure random token cho liên kết 1-click và băm SHA-256
+    const plainToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash  = hashSHA256(plainToken);
+
+    // 3. Thời gian hiệu lực: 15 phút
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    // 4. Vô hiệu hóa các mã OTP/token cũ trước đó của user này
+    await PasswordResetToken.updateMany(
+      { userId: user._id, isUsed: false },
+      { isUsed: true, usedAt: new Date() }
+    );
+
+    // 5. Lưu bản ghi PasswordResetToken mới
+    await PasswordResetToken.create({
+      userId:    user._id,
+      token:     tokenHash,
+      otp,
+      type:      'otp',
+      isUsed:    false,
+      ipAddress: req?.ip || req?.headers?.['x-forwarded-for'] || null,
+      expiresAt,
+    });
+
+    // 6. Tạo đường link đặt lại mật khẩu trực tiếp
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const resetUrl = `${clientUrl}/reset-password?token=${plainToken}&email=${encodeURIComponent(user.email)}`;
+
+    // 7. Gửi Email (kèm fallback in ra console trong môi trường Dev)
+    await emailService.sendPasswordResetOtpEmail({
+      to: user.email,
+      fullName: user.fullName,
+      otp,
+      resetUrl,
+      expiresInMinutes: 15,
+    });
+
+    logger.info(`Password reset OTP generated & sent to: ${user.email}`);
+
+    return {
+      message: 'Mã OTP và liên kết đặt lại mật khẩu đã được gửi đến email của bạn.',
+      email: user.email,
+      expiresIn: '15m',
+      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined,
+      devToken: process.env.NODE_ENV === 'development' ? plainToken : undefined,
+    };
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // RESET PASSWORD
+  // RESET PASSWORD (Verify Token/OTP & Update Password)
   // ═══════════════════════════════════════════════════════════════════════════
-  resetPassword: async ({ token, newPassword }) => {
-    if (!token || !newPassword) throw new AppError('Token và mật khẩu mới là bắt buộc', 400);
-    if (newPassword.length < PASSWORD_MIN_LENGTH) {
-      throw new AppError(`Mật khẩu phải có ít nhất ${PASSWORD_MIN_LENGTH} ký tự`, 400);
+  resetPassword: async ({ token, otp, email, newPassword }) => {
+    const inputToken = token?.trim();
+    const inputOtp   = otp?.trim();
+
+    if ((!inputToken && !inputOtp) || !newPassword) {
+      throw new AppError('Mã xác thực (Token hoặc OTP) và mật khẩu mới là bắt buộc', 400);
     }
-    // TODO: verify PasswordResetToken, update UserCredential
-    throw new AppError('Chức năng đang được phát triển', 501);
+    if (newPassword.length < PASSWORD_MIN_LENGTH) {
+      throw new AppError(`Mật khẩu mới phải có ít nhất ${PASSWORD_MIN_LENGTH} ký tự`, 400);
+    }
+
+    let resetDoc = null;
+
+    // 1. Xác thực bằng Token (từ Link Email)
+    if (inputToken) {
+      const hashed = hashSHA256(inputToken);
+      resetDoc = await PasswordResetToken.findOne({
+        $or: [
+          { token: hashed },
+          { token: inputToken },
+          { otp: inputToken }, // Người dùng gõ OTP vào ô token
+        ],
+        isUsed: false,
+        expiresAt: { $gt: new Date() },
+      });
+    }
+
+    // 2. Xác thực bằng OTP (+ Email)
+    if (!resetDoc && inputOtp) {
+      if (email) {
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (user) {
+          resetDoc = await PasswordResetToken.findOne({
+            userId: user._id,
+            otp: inputOtp,
+            isUsed: false,
+            expiresAt: { $gt: new Date() },
+          });
+        }
+      } else {
+        // Tìm theo mã OTP còn hiệu lực
+        resetDoc = await PasswordResetToken.findOne({
+          otp: inputOtp,
+          isUsed: false,
+          expiresAt: { $gt: new Date() },
+        });
+      }
+    }
+
+    if (!resetDoc) {
+      throw new AppError('Mã OTP hoặc liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn (15 phút)', 400);
+    }
+
+    const userId = resetDoc.userId;
+    const credential = await UserCredential.findOne({ userId });
+    if (!credential) {
+      throw new AppError('Không tìm thấy thông tin tài khoản người dùng', 404);
+    }
+
+    // Kiểm tra không được trùng với các mật khẩu gần đây
+    for (const prev of credential.passwordHistory?.slice(-PASSWORD_HISTORY_LIMIT) || []) {
+      const isDuplicate = await bcrypt.compare(newPassword, prev.hash);
+      if (isDuplicate) {
+        throw new AppError(`Không thể đặt lại mật khẩu trùng với ${PASSWORD_HISTORY_LIMIT} mật khẩu đã dùng gần đây`, 400);
+      }
+    }
+
+    // Băm mật khẩu mới
+    const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12;
+    const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+    // Cập nhật UserCredential
+    await UserCredential.findByIdAndUpdate(credential._id, {
+      $push: { passwordHistory: { hash: credential.passwordHash, changedAt: new Date() } },
+      passwordHash: newHash,
+      mustChangePassword: false,
+    });
+
+    // Mở khóa tài khoản (nếu trước đó bị khóa) và cập nhật thời điểm đổi MK
+    await User.findByIdAndUpdate(userId, {
+      passwordChangedAt: new Date(),
+      failedLoginAttempts: 0,
+      lockUntil: null,
+    });
+
+    // Đánh dấu token/OTP đã sử dụng
+    await PasswordResetToken.findByIdAndUpdate(resetDoc._id, {
+      isUsed: true,
+      usedAt: new Date(),
+    });
+
+    // Thu hồi toàn bộ phiên làm việc cũ để bảo mật (Security Revocation)
+    await UserSession.updateMany({ userId, isActive: true }, { isActive: false, loggedOutAt: new Date() });
+    await RefreshToken.updateMany(
+      { userId, isRevoked: false },
+      { isRevoked: true, revokedAt: new Date(), revokedReason: REVOKE_REASON.LOGOUT_ALL }
+    );
+
+    logger.info(`✅ Password successfully reset for user ID: ${userId}`);
+    return {
+      message: 'Mật khẩu đã được thay đổi thành công. Vui lòng đăng nhập bằng mật khẩu mới.',
+    };
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
