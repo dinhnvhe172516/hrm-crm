@@ -94,8 +94,34 @@ const resetPassword = async (req, res, next) => {
 
 const verifyEmail = async (req, res, next) => {
     try {
-        await authService.verifyEmail(req.body.token);
-        successResponse(res, null, 'Email verified');
+        const payload = {
+            token: req.body.token || req.query.token,
+            otp:   req.body.otp,
+            email: req.body.email || req.query.email,
+        };
+        const data = await authService.verifyEmail(payload);
+        successResponse(res, data, data?.message || 'Xác minh email thành công');
+    } catch (e) {
+        next(e);
+    }
+};
+
+const verifyEmailOtp = async (req, res, next) => {
+    try {
+        const data = await authService.verifyEmail({
+            otp:   req.body.otp,
+            email: req.body.email,
+        });
+        successResponse(res, data, data?.message || 'Xác minh email thành công');
+    } catch (e) {
+        next(e);
+    }
+};
+
+const resendVerifyEmail = async (req, res, next) => {
+    try {
+        const data = await authService.resendVerifyEmail(req.body.email);
+        successResponse(res, data, data?.message || 'Mã xác thực đã được gửi lại');
     } catch (e) {
         next(e);
     }
@@ -103,17 +129,26 @@ const verifyEmail = async (req, res, next) => {
 
 const changePassword = async (req, res, next) => {
     try {
-        await authService.changePassword(req.user.userId, req.body);
-        successResponse(res, null, 'Password changed');
+        const data = await authService.changePassword(req.user.userId, req.body);
+        successResponse(res, data, 'Đổi mật khẩu thành công');
     } catch (e) {
         next(e);
     }
 };
 
-const enable2FA = async (req, res, next) => {
+const setup2FA = async (req, res, next) => {
     try {
-        const data = await authService.enable2FA(req.user.userId);
-        successResponse(res, data);
+        const data = await authService.setup2FA(req.user.userId);
+        successResponse(res, data, 'Khởi tạo cấu hình 2FA thành công');
+    } catch (e) {
+        next(e);
+    }
+};
+
+const confirm2FA = async (req, res, next) => {
+    try {
+        const data = await authService.confirm2FA(req.user.userId, req.body.token || req.body);
+        successResponse(res, data, data?.message || '2FA đã được kích hoạt');
     } catch (e) {
         next(e);
     }
@@ -121,8 +156,22 @@ const enable2FA = async (req, res, next) => {
 
 const verify2FA = async (req, res, next) => {
     try {
-        await authService.verify2FA(req.user.userId, req.body.token);
-        successResponse(res, null, '2FA enabled');
+        // Hỗ trợ luồng login với tempToken + OTP
+        if (req.body.tempToken) {
+            const data = await authService.verify2FA({
+                token:     req.body.token,
+                tempToken: req.body.tempToken,
+            }, req);
+            return successResponse(res, data, 'Xác thực 2 bước thành công');
+        }
+
+        // Hoặc xác nhận kích hoạt khi user đã login
+        if (req.user?.userId) {
+            const data = await authService.confirm2FA(req.user.userId, req.body.token || req.body);
+            return successResponse(res, data, '2FA đã được xác nhận');
+        }
+
+        throw new AppError('Thiếu thông tin xác thực 2FA', 400);
     } catch (e) {
         next(e);
     }
@@ -130,8 +179,26 @@ const verify2FA = async (req, res, next) => {
 
 const disable2FA = async (req, res, next) => {
     try {
-        await authService.disable2FA(req.user.userId, req.body.token);
-        successResponse(res, null, '2FA disabled');
+        const data = await authService.disable2FA(req.user.userId, req.body);
+        successResponse(res, data, data?.message || 'Đã hủy kích hoạt 2FA');
+    } catch (e) {
+        next(e);
+    }
+};
+
+const getBackupCodes = async (req, res, next) => {
+    try {
+        const data = await authService.getBackupCodes(req.user.userId);
+        successResponse(res, data);
+    } catch (e) {
+        next(e);
+    }
+};
+
+const regenBackupCodes = async (req, res, next) => {
+    try {
+        const data = await authService.regenBackupCodes(req.user.userId, req.body);
+        successResponse(res, data, data?.message || 'Đã tạo lại mã dự phòng mới');
     } catch (e) {
         next(e);
     }
@@ -157,10 +224,15 @@ module.exports = {
     forgotPassword,
     resetPassword,
     verifyEmail,
+    verifyEmailOtp,
+    resendVerifyEmail,
     changePassword,
-    enable2FA,
+    setup2FA,
+    confirm2FA,
     verify2FA,
     disable2FA,
+    getBackupCodes,
+    regenBackupCodes,
     googleAuth,
     googleCallback,
 };

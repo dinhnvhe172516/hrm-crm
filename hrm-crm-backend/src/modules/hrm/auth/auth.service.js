@@ -14,6 +14,10 @@ const RefreshToken   = require('./RefreshToken.model');
 const UserSession    = require('./UserSession.model');
 const LoginHistory   = require('./LoginHistory.model');
 const PasswordResetToken = require('./PasswordResetToken.model');
+const TwoFactorAuth  = require('./TwoFactorAuth.model');
+const EmailVerification = require('./EmailVerification.model');
+const speakeasy      = require('speakeasy');
+const QRCode         = require('qrcode');
 const emailService   = require('../../../shared/services/email.service');
 const { AppError }   = require('../../../middlewares/error.middleware');
 const { getRedis }   = require('../../../config/redis');
@@ -36,6 +40,98 @@ const {
 } = require('../../../shared/constants/auth');
 
 const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 12;
+
+/**
+ * Helper cấp phát UserSession, Access Token, Refresh Token và Audit Log
+ */
+const issueAuthTokensAndSession = async (user, req, baseHistory, mustChangePassword = false) => {
+  const device = parseDeviceInfo(req);
+
+  // 1. Giới hạn số phiên đồng thời
+  const maxSessions    = parseInt(process.env.MAX_SESSIONS_PER_USER) || DEFAULT_MAX_SESSIONS_PER_USER;
+  const activeSessions = await UserSession.find({ userId: user._id, isActive: true }).sort({ lastActivityAt: 1 });
+
+  if (activeSessions.length >= maxSessions) {
+    const oldest = activeSessions[0];
+    await UserSession.findByIdAndUpdate(oldest._id, { isActive: false, loggedOutAt: new Date() });
+    await RefreshToken.updateMany(
+      { sessionId: oldest._id },
+      { isRevoked: true, revokedAt: new Date(), revokedReason: REVOKE_REASON.LOGOUT }
+    );
+  }
+
+  // 2. Tạo session mới
+  const sessionLifetimeDays = parseInt(process.env.SESSION_LIFETIME_DAYS) || DEFAULT_SESSION_LIFETIME_DAYS;
+  const session = await UserSession.create({
+    userId:       user._id,
+    sessionToken: uuidv4(),
+    deviceInfo: {
+      deviceName: device.deviceName,
+      deviceType: device.deviceType,
+      browser:    device.deviceInfo.browser,
+      os:         device.deviceInfo.os,
+      ipAddress:  device.ipAddress,
+      location:   device.location,
+    },
+    isActive:  true,
+    expiresAt: new Date(Date.now() + sessionLifetimeDays * 24 * 60 * 60 * 1000),
+  });
+
+  // 3. Tạo tokens
+  const tokenPayload = {
+    userId:    user._id.toString(),
+    email:     user.email,
+    role:      user.role?.code  || null,
+    roleCode:  user.role?.code  || null,
+    roleLevel: user.role?.level || null,
+    sessionId: session._id.toString(),
+  };
+
+  const accessToken                              = generateAccessToken(tokenPayload);
+  const { plain: refreshPlain, hash: refreshHash } = generateRefreshToken();
+  const refreshExpiresDays = parseInt(process.env.JWT_REFRESH_EXPIRES) || DEFAULT_REFRESH_EXPIRES_DAYS;
+
+  await RefreshToken.create({
+    userId:    user._id,
+    sessionId: session._id,
+    token:     refreshHash,
+    family:    uuidv4(),
+    isRevoked: false,
+    expiresAt: new Date(Date.now() + refreshExpiresDays * 24 * 60 * 60 * 1000),
+  });
+
+  // 4. Ghi audit log
+  if (baseHistory) {
+    await writeAuditLog(LoginHistory, { ...baseHistory, isSuccess: true, sessionId: session._id });
+  }
+
+  // 5. Lấy permissions (ưu tiên Redis cache)
+  const permissions = await getRolePermissions(user.role?.code);
+
+  logger.info(`User authenticated: ${user.email} from ${device.ipAddress}`);
+
+  return {
+    accessToken,
+    refreshToken:       refreshPlain,
+    tokenType:          'Bearer',
+    expiresIn:          process.env.JWT_ACCESS_EXPIRES || '15m',
+    mustChangePassword: Boolean(mustChangePassword),
+    user: {
+      id:              user._id,
+      employeeCode:    user.employeeCode || null,
+      email:           user.email,
+      fullName:        user.fullName,
+      avatar:          user.avatar || null,
+      role:            user.role ? { code: user.role.code, name: user.role.name, level: user.role.level } : null,
+      department:      user.department ? { code: user.department.code, name: user.department.name } : null,
+      position:        user.position ? { code: user.position.code, title: user.position.title } : null,
+      permissions,
+      isEmailVerified: user.isEmailVerified,
+      status:          user.status,
+      lastLoginAt:     user.lastLoginAt,
+    },
+  };
+};
 
 // ─── AUTH SERVICE ─────────────────────────────────────────────────────────────
 const authService = {
@@ -66,8 +162,38 @@ const authService = {
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     await UserCredential.create({ userId: user._id, passwordHash, mustChangePassword: false });
 
-    logger.info(`User registered: ${user.email}`);
-    return { userId: user._id, email: user.email, fullName: user.fullName };
+    // Sinh mã OTP và Token xác thực email hiệu lực 24 giờ
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const plainToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash  = hashSHA256(plainToken);
+    const expiresAt  = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await EmailVerification.create({
+      userId:    user._id,
+      email:     user.email,
+      token:     tokenHash,
+      otp,
+      expiresAt,
+    });
+
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const verifyUrl = `${clientUrl}/verify-email?token=${plainToken}&email=${encodeURIComponent(user.email)}`;
+
+    await emailService.sendEmailVerificationEmail({
+      to: user.email,
+      fullName: user.fullName,
+      otp,
+      verifyUrl,
+      expiresInHours: 24,
+    });
+
+    logger.info(`User registered & verification email dispatched: ${user.email}`);
+    return {
+      userId:   user._id,
+      email:    user.email,
+      fullName: user.fullName,
+      devOtp:   process.env.NODE_ENV === 'development' ? otp : undefined,
+    };
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -156,88 +282,23 @@ const authService = {
       lastLoginAt:         new Date(),
     });
 
-    // ── 6. Giới hạn số phiên đồng thời ────────────────────────────────────
-    const maxSessions    = parseInt(process.env.MAX_SESSIONS_PER_USER) || DEFAULT_MAX_SESSIONS_PER_USER;
-    const activeSessions = await UserSession.find({ userId: user._id, isActive: true }).sort({ lastActivityAt: 1 });
-
-    if (activeSessions.length >= maxSessions) {
-      const oldest = activeSessions[0];
-      await UserSession.findByIdAndUpdate(oldest._id, { isActive: false, loggedOutAt: new Date() });
-      await RefreshToken.updateMany(
-        { sessionId: oldest._id },
-        { isRevoked: true, revokedAt: new Date(), revokedReason: REVOKE_REASON.LOGOUT }
+    // ── 6. Kiểm tra cấu hình xác thực 2 bước (2FA) ────────────────────────
+    const twoFactorDoc = await TwoFactorAuth.findOne({ userId: user._id, isEnabled: true });
+    if (twoFactorDoc && twoFactorDoc.isEnabled && twoFactorDoc.totp?.isVerified) {
+      const tempToken = jwt.sign(
+        { userId: user._id.toString(), email: user.email, purpose: '2fa_login' },
+        process.env.JWT_SECRET || 'jwt_secret_dev_key',
+        { expiresIn: '5m' }
       );
+      logger.info(`🔐 Yêu cầu mã OTP 2FA cho tài khoản: ${user.email}`);
+      return {
+        requiresTwoFactor: true,
+        tempToken,
+      };
     }
 
-    // ── 7. Tạo session mới ────────────────────────────────────────────────
-    const sessionLifetimeDays = parseInt(process.env.SESSION_LIFETIME_DAYS) || DEFAULT_SESSION_LIFETIME_DAYS;
-    const session = await UserSession.create({
-      userId:       user._id,
-      sessionToken: uuidv4(),
-      deviceInfo: {
-        deviceName: device.deviceName,
-        deviceType: device.deviceType,
-        browser:    device.deviceInfo.browser,
-        os:         device.deviceInfo.os,
-        ipAddress:  device.ipAddress,
-        location:   device.location,
-      },
-      isActive:  true,
-      expiresAt: new Date(Date.now() + sessionLifetimeDays * 24 * 60 * 60 * 1000),
-    });
-
-    // ── 8. Tạo tokens ─────────────────────────────────────────────────────
-    const tokenPayload = {
-      userId:    user._id.toString(),
-      email:     user.email,
-      role:      user.role?.code  || null,
-      roleCode:  user.role?.code  || null,
-      roleLevel: user.role?.level || null,
-      sessionId: session._id.toString(),
-    };
-
-    const accessToken                              = generateAccessToken(tokenPayload);
-    const { plain: refreshPlain, hash: refreshHash } = generateRefreshToken();
-    const refreshExpiresDays = parseInt(process.env.JWT_REFRESH_EXPIRES) || DEFAULT_REFRESH_EXPIRES_DAYS;
-
-    await RefreshToken.create({
-      userId:    user._id,
-      sessionId: session._id,
-      token:     refreshHash,
-      family:    uuidv4(),
-      isRevoked: false,
-      expiresAt: new Date(Date.now() + refreshExpiresDays * 24 * 60 * 60 * 1000),
-    });
-
-    // ── 9. Ghi lịch sử đăng nhập ──────────────────────────────────────────
-    await writeAuditLog(LoginHistory, { ...baseHistory, isSuccess: true, sessionId: session._id });
-
-    // Lấy permissions (ưu tiên Redis cache)
-    const permissions = await getRolePermissions(user.role?.code);
-
-    logger.info(`User logged in: ${user.email} from ${device.ipAddress}`);
-
-    return {
-      accessToken,
-      refreshToken:       refreshPlain,
-      tokenType:          'Bearer',
-      expiresIn:          process.env.JWT_ACCESS_EXPIRES || '15m',
-      mustChangePassword: credential.mustChangePassword || false,
-      user: {
-        id:              user._id,
-        employeeCode:    user.employeeCode || null,
-        email:           user.email,
-        fullName:        user.fullName,
-        avatar:          user.avatar || null,
-        role:            user.role ? { code: user.role.code, name: user.role.name, level: user.role.level } : null,
-        department:      user.department ? { code: user.department.code, name: user.department.name } : null,
-        position:        user.position ? { code: user.position.code, title: user.position.title } : null,
-        permissions,
-        isEmailVerified: user.isEmailVerified,
-        status:          user.status,
-        lastLoginAt:     user.lastLoginAt,
-      },
-    };
+    // ── 7. Tạo session và cấp phát token truy cập ──────────────────────────
+    return issueAuthTokensAndSession(user, req, baseHistory, credential.mustChangePassword);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -578,12 +639,125 @@ const authService = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VERIFY EMAIL
+  // VERIFY EMAIL (Verify OTP or Token Link)
   // ═══════════════════════════════════════════════════════════════════════════
-  verifyEmail: async (token) => {
-    if (!token) throw new AppError('Token xác thực là bắt buộc', 400);
-    // TODO: verify EmailVerification token
-    throw new AppError('Chức năng đang được phát triển', 501);
+  verifyEmail: async (payload) => {
+    // Chấp nhận cả string (token) hoặc object ({ token, otp, email })
+    let token = typeof payload === 'string' ? payload : payload?.token;
+    let otp   = typeof payload === 'object' ? payload?.otp : null;
+    let email = typeof payload === 'object' ? payload?.email : null;
+
+    token = token?.trim();
+    otp   = otp?.trim();
+    email = email?.toLowerCase().trim();
+
+    if (!token && !otp) {
+      throw new AppError('Mã OTP xác thực hoặc liên kết là bắt buộc', 400);
+    }
+
+    let record = null;
+
+    // 1. Kiểm tra theo Token
+    if (token) {
+      const hashed = hashSHA256(token);
+      record = await EmailVerification.findOne({
+        $or: [{ token: hashed }, { token: token }, { otp: token }],
+        isVerified: false,
+        expiresAt: { $gt: new Date() },
+      });
+    }
+
+    // 2. Kiểm tra theo OTP (+ Email nếu có)
+    if (!record && otp) {
+      const query = {
+        otp,
+        isVerified: false,
+        expiresAt: { $gt: new Date() },
+      };
+      if (email) query.email = email;
+      record = await EmailVerification.findOne(query);
+    }
+
+    if (!record) {
+      throw new AppError('Mã OTP hoặc liên kết xác thực không đúng hoặc đã hết hạn (24 giờ).', 400);
+    }
+
+    // Đánh dấu đã xác thực
+    record.isVerified = true;
+    record.verifiedAt = new Date();
+    await record.save();
+
+    await User.findByIdAndUpdate(record.userId, { isEmailVerified: true });
+
+    const user = await User.findById(record.userId)
+      .populate('role', 'code name level')
+      .populate('department', 'name code')
+      .populate('position', 'title code level');
+
+    logger.info(`✅ Email verified successfully for: ${record.email}`);
+
+    return {
+      message: 'Xác minh email thành công!',
+      email: record.email,
+      user: user
+        ? {
+            id:              user._id,
+            email:           user.email,
+            fullName:        user.fullName,
+            isEmailVerified: true,
+          }
+        : null,
+    };
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RESEND VERIFICATION EMAIL
+  // ═══════════════════════════════════════════════════════════════════════════
+  resendVerifyEmail: async (email) => {
+    if (!email) throw new AppError('Email là bắt buộc', 400);
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return { message: 'Nếu email tồn tại trong hệ thống, mã xác thực mới đã được gửi.' };
+    }
+
+    if (user.isEmailVerified) {
+      return { message: 'Email này đã được xác thực trước đó.' };
+    }
+
+    await EmailVerification.deleteMany({ userId: user._id });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const plainToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash  = hashSHA256(plainToken);
+    const expiresAt  = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await EmailVerification.create({
+      userId:    user._id,
+      email:     user.email,
+      token:     tokenHash,
+      otp,
+      expiresAt,
+    });
+
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const verifyUrl = `${clientUrl}/verify-email?token=${plainToken}&email=${encodeURIComponent(user.email)}`;
+
+    await emailService.sendEmailVerificationEmail({
+      to: user.email,
+      fullName: user.fullName,
+      otp,
+      verifyUrl,
+      expiresInHours: 24,
+    });
+
+    logger.info(`Resent email verification OTP for: ${user.email}`);
+
+    return {
+      message: 'Mã xác thực mới đã được gửi tới email của bạn.',
+      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined,
+    };
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -619,14 +793,292 @@ const authService = {
     await User.findByIdAndUpdate(userId, { passwordChangedAt: new Date() });
 
     logger.info(`Password changed for user: ${userId}`);
+    return { message: 'Đổi mật khẩu thành công.' };
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 2FA — TODO: dùng speakeasy
+  // 2FA - STEP 1: SETUP (Tạo Secret TOTP, Mã QR & 10 Backup Codes)
   // ═══════════════════════════════════════════════════════════════════════════
-  enable2FA:  async (_userId)         => { throw new AppError('Chức năng đang được phát triển', 501); },
-  verify2FA:  async (_userId, _token) => { throw new AppError('Chức năng đang được phát triển', 501); },
-  disable2FA: async (_userId, _token) => { throw new AppError('Chức năng đang được phát triển', 501); },
+  setup2FA: async (userId) => {
+    const user = await User.findById(userId);
+    if (!user) throw new AppError('Người dùng không tồn tại', 404);
+
+    // 1. Sinh secret base32
+    const secret = speakeasy.generateSecret({
+      length: 20,
+      name: `NEXUS CORP (${user.email})`,
+      issuer: 'NEXUS CORP',
+    });
+
+    // 2. Sinh QR Code dạng Data URL
+    const qrCode = await QRCode.toDataURL(secret.otpauth_url);
+
+    // 3. Sinh 10 backup codes (8 ký tự ngẫu nhiên, VD: A8B3F9C2)
+    const plainBackupCodes  = [];
+    const hashedBackupCodes = [];
+    for (let i = 0; i < 10; i++) {
+      const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+      plainBackupCodes.push(code);
+      hashedBackupCodes.push({ code: hashSHA256(code), isUsed: false });
+    }
+
+    // 4. Lưu tạm cấu hình (chưa kích hoạt isEnabled cho đến khi confirm thành công)
+    await TwoFactorAuth.findOneAndUpdate(
+      { userId },
+      {
+        userId,
+        isEnabled: false,
+        totp: {
+          secret:     secret.base32,
+          isVerified: false,
+        },
+        backupCodes: hashedBackupCodes,
+        otpChannel:  'totp',
+      },
+      { upsert: true, new: true }
+    );
+
+    logger.info(`2FA setup initiated for user: ${user.email}`);
+
+    return {
+      secret:      secret.base32,
+      qrCode,
+      backupCodes: plainBackupCodes,
+    };
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2FA - STEP 2: CONFIRM (Xác nhận OTP sau khi quét mã QR để chính thức bật 2FA)
+  // ═══════════════════════════════════════════════════════════════════════════
+  confirm2FA: async (userId, token) => {
+    const inputToken = (typeof token === 'object' ? token?.token : token)?.toString().trim();
+    if (!inputToken) throw new AppError('Mã OTP 6 chữ số là bắt buộc', 400);
+
+    const twoFactorDoc = await TwoFactorAuth.findOne({ userId });
+    if (!twoFactorDoc || !twoFactorDoc.totp?.secret) {
+      throw new AppError('Chưa bắt đầu thiết lập 2FA. Vui lòng thực hiện bước cài đặt trước.', 400);
+    }
+
+    const isValid = speakeasy.totp.verify({
+      secret:   twoFactorDoc.totp.secret,
+      encoding: 'base32',
+      token:    inputToken,
+      window:   1, // Cho phép trễ +/- 30s
+    });
+
+    if (!isValid) {
+      throw new AppError('Mã OTP không chính xác hoặc đã hết hiệu lực. Vui lòng thử lại.', 400);
+    }
+
+    twoFactorDoc.isEnabled       = true;
+    twoFactorDoc.totp.isVerified = true;
+    twoFactorDoc.totp.enabledAt  = new Date();
+    await twoFactorDoc.save();
+
+    logger.info(`✅ 2FA confirmed and activated for user ID: ${userId}`);
+
+    return {
+      message: 'Xác thực 2 bước (2FA) đã được kích hoạt thành công.',
+    };
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2FA - VERIFY (Dùng khi Đăng nhập với tempToken + OTP / Backup Code)
+  // ═══════════════════════════════════════════════════════════════════════════
+  verify2FA: async ({ token, tempToken }, req) => {
+    if (!token || !tempToken) {
+      throw new AppError('Mã xác thực OTP và token tạm thời 2FA là bắt buộc', 400);
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(tempToken, process.env.JWT_SECRET || 'jwt_secret_dev_key');
+    } catch (err) {
+      throw new AppError('Phiên xác thực 2 bước đã hết hạn (5 phút). Vui lòng đăng nhập lại.', 401);
+    }
+
+    if (decoded.purpose !== '2fa_login') {
+      throw new AppError('Token không hợp lệ cho việc xác thực 2 bước.', 400);
+    }
+
+    const user = await User.findById(decoded.userId)
+      .select('+failedLoginAttempts +lockUntil +lastLoginAt +isActive +status +isEmailVerified')
+      .populate('role', 'code name level')
+      .populate('department', 'name code')
+      .populate('position', 'title code level');
+
+    if (!user || !user.isActive) {
+      throw new AppError('Tài khoản không tồn tại hoặc đã bị vô hiệu hóa.', 403);
+    }
+
+    const twoFactorDoc = await TwoFactorAuth.findOne({ userId: user._id, isEnabled: true });
+    if (!twoFactorDoc) {
+      throw new AppError('Tài khoản chưa kích hoạt tính năng 2FA.', 400);
+    }
+
+    const trimmedCode = token.toString().trim();
+
+    // 1. Kiểm tra TOTP (Google Authenticator 6 số)
+    let isValid = false;
+    if (twoFactorDoc.totp?.secret) {
+      isValid = speakeasy.totp.verify({
+        secret:   twoFactorDoc.totp.secret,
+        encoding: 'base32',
+        token:    trimmedCode,
+        window:   1,
+      });
+    }
+
+    // 2. Nếu không khớp TOTP, kiểm tra 10 Backup Codes (8 ký tự)
+    if (!isValid && twoFactorDoc.backupCodes?.length) {
+      const hashed = hashSHA256(trimmedCode.toUpperCase());
+      const backupIndex = twoFactorDoc.backupCodes.findIndex(
+        (bc) => !bc.isUsed && (bc.code === hashed || bc.code === trimmedCode.toUpperCase())
+      );
+      if (backupIndex !== -1) {
+        isValid = true;
+        twoFactorDoc.backupCodes[backupIndex].isUsed = true;
+        twoFactorDoc.backupCodes[backupIndex].usedAt = new Date();
+        await twoFactorDoc.save();
+        logger.info(`Used backup code for user: ${user.email} (Index: ${backupIndex + 1})`);
+      }
+    }
+
+    if (!isValid) {
+      throw new AppError('Mã OTP 2FA hoặc mã dự phòng không chính xác hoặc đã hết hạn.', 400);
+    }
+
+    const credential = await UserCredential.findOne({ userId: user._id });
+    const device = parseDeviceInfo(req);
+    const baseHistory = {
+      userId:     user._id,
+      email:      user.email,
+      ipAddress:  device.ipAddress,
+      userAgent:  device.userAgent,
+      location:   device.location,
+      deviceInfo: device.deviceInfo,
+    };
+
+    return issueAuthTokensAndSession(user, req, baseHistory, credential?.mustChangePassword);
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2FA - DISABLE (Hủy kích hoạt 2FA với Mật khẩu hoặc OTP)
+  // ═══════════════════════════════════════════════════════════════════════════
+  disable2FA: async (userId, payload) => {
+    const token    = typeof payload === 'object' ? payload?.token : payload;
+    const password = typeof payload === 'object' ? payload?.password : null;
+
+    const twoFactorDoc = await TwoFactorAuth.findOne({ userId, isEnabled: true });
+    if (!twoFactorDoc) {
+      throw new AppError('Tài khoản chưa bật tính năng xác thực 2 bước.', 400);
+    }
+
+    let verified = false;
+
+    // Xác thực qua mật khẩu hiện tại
+    if (password) {
+      const cred = await UserCredential.findOne({ userId });
+      if (cred && (await bcrypt.compare(password, cred.passwordHash))) {
+        verified = true;
+      }
+    }
+
+    // Hoặc xác thực qua mã OTP hiện tại
+    if (!verified && token && twoFactorDoc.totp?.secret) {
+      verified = speakeasy.totp.verify({
+        secret:   twoFactorDoc.totp.secret,
+        encoding: 'base32',
+        token:    token.toString().trim(),
+        window:   1,
+      });
+    }
+
+    if (!verified) {
+      throw new AppError('Mật khẩu tài khoản hoặc mã OTP không đúng. Không thể hủy 2FA.', 400);
+    }
+
+    twoFactorDoc.isEnabled       = false;
+    twoFactorDoc.totp.isVerified = false;
+    await twoFactorDoc.save();
+
+    logger.info(`2FA disabled for user ID: ${userId}`);
+    return {
+      message: 'Đã hủy kích hoạt xác thực 2 bước (2FA) thành công.',
+    };
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2FA - GET BACKUP CODES STATUS
+  // ═══════════════════════════════════════════════════════════════════════════
+  getBackupCodes: async (userId) => {
+    const twoFactorDoc = await TwoFactorAuth.findOne({ userId });
+    if (!twoFactorDoc || !twoFactorDoc.isEnabled) {
+      throw new AppError('Tài khoản chưa kích hoạt tính năng xác thực 2 bước.', 400);
+    }
+
+    const total     = twoFactorDoc.backupCodes.length;
+    const remaining = twoFactorDoc.backupCodes.filter((c) => !c.isUsed).length;
+
+    return {
+      isEnabled: twoFactorDoc.isEnabled,
+      total,
+      remaining,
+      codes: twoFactorDoc.backupCodes.map((c, idx) => ({
+        index:  idx + 1,
+        isUsed: c.isUsed,
+        usedAt: c.usedAt,
+      })),
+    };
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2FA - REGENERATE BACKUP CODES
+  // ═══════════════════════════════════════════════════════════════════════════
+  regenBackupCodes: async (userId, payload) => {
+    const token    = typeof payload === 'object' ? payload?.token : payload;
+    const password = typeof payload === 'object' ? payload?.password : null;
+
+    const twoFactorDoc = await TwoFactorAuth.findOne({ userId, isEnabled: true });
+    if (!twoFactorDoc) throw new AppError('Tài khoản chưa bật 2FA', 400);
+
+    let verified = false;
+    if (token && twoFactorDoc.totp?.secret) {
+      verified = speakeasy.totp.verify({
+        secret:   twoFactorDoc.totp.secret,
+        encoding: 'base32',
+        token:    token.toString().trim(),
+        window:   1,
+      });
+    }
+    if (!verified && password) {
+      const cred = await UserCredential.findOne({ userId });
+      if (cred && (await bcrypt.compare(password, cred.passwordHash))) {
+        verified = true;
+      }
+    }
+
+    if (!verified) {
+      throw new AppError('Vui lòng cung cấp mật khẩu hoặc mã OTP hợp lệ để tạo mới mã dự phòng.', 400);
+    }
+
+    const plainBackupCodes  = [];
+    const hashedBackupCodes = [];
+    for (let i = 0; i < 10; i++) {
+      const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+      plainBackupCodes.push(code);
+      hashedBackupCodes.push({ code: hashSHA256(code), isUsed: false });
+    }
+
+    twoFactorDoc.backupCodes = hashedBackupCodes;
+    await twoFactorDoc.save();
+
+    logger.info(`New backup codes regenerated for user ID: ${userId}`);
+    return {
+      message:     'Đã tạo mới 10 mã dự phòng thành công.',
+      backupCodes: plainBackupCodes,
+    };
+  },
 };
 
 module.exports = authService;

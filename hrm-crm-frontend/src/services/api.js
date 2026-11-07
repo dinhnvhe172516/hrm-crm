@@ -33,7 +33,9 @@ api.interceptors.response.use(
       originalRequest.url?.includes('/auth/register') ||
       originalRequest.url?.includes('/auth/refresh-token') ||
       originalRequest.url?.includes('/auth/forgot-password') ||
-      originalRequest.url?.includes('/auth/reset-password')
+      originalRequest.url?.includes('/auth/reset-password') ||
+      originalRequest.url?.includes('/auth/2fa/verify') ||
+      originalRequest.url?.includes('/auth/verify-email')
 
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthRoute) {
       const { refreshToken, setTokens, logout } = useAuthStore.getState()

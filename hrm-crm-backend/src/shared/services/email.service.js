@@ -140,6 +140,82 @@ const emailService = {
       html,
     });
   },
+
+  /**
+   * Gửi Email Xác minh Tài khoản (OTP + Link xác thực)
+   */
+  sendEmailVerificationEmail: async ({ to, fullName, otp, verifyUrl, expiresInHours = 24 }) => {
+    const subject = `[NEXUS CORP] Mã xác thực kích hoạt tài khoản: ${otp}`;
+    const text = `Xin chào ${fullName || 'Nhân viên'},\n\nChào mừng bạn đến với NEXUS CORP.\nMã OTP kích hoạt tài khoản của bạn là: ${otp} (Hiệu lực: ${expiresInHours} giờ).\nHoặc bạn có thể truy cập liên kết: ${verifyUrl}\n\nNếu bạn không yêu cầu tài khoản này, vui lòng bỏ qua email.`;
+
+    const html = `
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #334155; }
+        .card { max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); }
+        .header { background: linear-gradient(135deg, #10b981, #059669); padding: 28px 24px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
+        .body { padding: 32px 28px; }
+        .otp-box { background: #f0fdf4; border: 2px dashed #86efac; border-radius: 12px; padding: 18px; text-align: center; margin: 24px 0; }
+        .otp-code { font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #065f46; font-family: monospace; }
+        .btn { display: inline-block; padding: 13px 28px; background: #10b981; color: #ffffff !important; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 14px; margin-top: 10px; }
+        .footer { background: #f8fafc; padding: 18px 24px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="header">
+          <h1>NEXUS CORPORATION</h1>
+          <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.9;">Xác thực Email &amp; Kích hoạt Tài khoản</p>
+        </div>
+        <div class="body">
+          <p style="font-size: 15px; margin-top: 0;">Xin chào <strong>${fullName || 'Nhân sự mới'}</strong>,</p>
+          <p style="font-size: 14px; line-height: 1.6; color: #64748b;">
+            Chào mừng bạn đến với hệ thống Quản trị Doanh nghiệp NEXUS CORP. Vui lòng nhập mã OTP 6 số dưới đây để kích hoạt và xác thực email của bạn:
+          </p>
+          
+          <div class="otp-box">
+            <div style="font-size: 11px; text-transform: uppercase; color: #047857; font-weight: 700; margin-bottom: 6px;">Mã OTP Xác thực Email</div>
+            <div class="otp-code">${otp}</div>
+            <div style="font-size: 12px; color: #059669; margin-top: 6px; font-weight: 500;">Hiệu lực trong ${expiresInHours} giờ</div>
+          </div>
+
+          ${verifyUrl ? `
+          <p style="font-size: 13px; color: #64748b; text-align: center;">Hoặc bấm vào nút bên dưới để xác thực trực tiếp:</p>
+          <div style="text-align: center; margin-bottom: 24px;">
+            <a href="${verifyUrl}" class="btn" target="_blank">Kích Hoạt Tài Khoản Ngay</a>
+          </div>
+          ` : ''}
+
+          <p style="font-size: 12px; line-height: 1.5; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+            Nếu bạn không đăng ký tài khoản này, vui lòng liên hệ Bộ phận Nhân sự hoặc Quản trị IT.
+          </p>
+        </div>
+        <div class="footer">
+          © 2026 NEXUS Corp. Security Team · All rights reserved.
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+
+    console.log('\n======================================================================');
+    console.log('✉️ [EMAIL VERIFICATION SENT]');
+    console.log(`👉 Người nhận (To): ${to} (${fullName})`);
+    console.log(`👉 MÃ OTP 6 CHỮ SỐ:  >>> ${otp} <<< (Hạn ${expiresInHours} giờ)`);
+    if (verifyUrl) console.log(`👉 Link xác thực:  ${verifyUrl}`);
+    console.log('======================================================================\n');
+
+    return emailService.sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
+  },
 };
 
 module.exports = emailService;
